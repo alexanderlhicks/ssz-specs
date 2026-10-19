@@ -1,4 +1,8 @@
-"""Check that every module is reachable from its audited proof root, and that no implementation imports a proof."""
+"""
+Check that every module is reachable from its audited proof root.
+
+Also check that no implementation module imports a proof.
+"""
 
 import re
 import sys
@@ -11,7 +15,7 @@ trees = [("Ssz", "Ssz.Proofs"), ("SszNative", "SszNative.Proofs")]
 
 
 def imports(path: Path) -> list[str]:
-    # The modules one file imports, in order.
+    """The modules one file imports, in order."""
     found = []
     for line in path.read_text().splitlines():
         if match := re.match(r"^(?:public\s+)?import\s+(.+)", line):
@@ -20,7 +24,7 @@ def imports(path: Path) -> list[str]:
 
 
 def closure(start: str, modules: dict[str, Path]) -> set[str]:
-    # Every module of the tree reachable from one module.
+    """Every module of the tree reachable from one module."""
     seen: set[str] = set()
     pending = [start]
     while pending:
@@ -43,14 +47,15 @@ for implementation, proofs in trees:
     # An unimported file could otherwise escape both the default build and the axiom audit.
     missing = sorted(modules.keys() - closure(proofs, modules))
     if missing:
-        failures.append(f"{implementation} modules missing from the audited import closure:\n" + "\n".join(missing))
+        heading = f"{implementation} modules missing from the audited import closure:"
+        failures.append(heading + "\n" + "\n".join(missing))
 
     # A proof reached only through the implementation would make the split meaningless.
-    leaked = sorted(
-        name for name in closure(implementation, modules) if name == proofs or name.startswith(proofs + ".")
-    )
+    reached = closure(implementation, modules)
+    leaked = sorted(name for name in reached if name == proofs or name.startswith(proofs + "."))
     if leaked:
-        failures.append(f"proof modules imported by the {implementation} implementation:\n" + "\n".join(leaked))
+        heading = f"proof modules imported by the {implementation} implementation:"
+        failures.append(heading + "\n" + "\n".join(leaked))
 
 if failures:
     sys.exit("\n\n".join(failures))
