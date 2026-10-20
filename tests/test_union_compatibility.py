@@ -868,8 +868,8 @@ def test_progressive_layouts_pin_a_shared_name_to_one_position() -> None:
     """
     assert_relation(Square, MovedSide, False)
     # The shared position is genuinely fine on its own, which is what makes the case sharp.
-    square_color = Square.model_fields["color"].annotation
-    moved_color = MovedSide.model_fields["color"].annotation
+    square_color = dict(Square._FIELD_TYPES)["color"]
+    moved_color = dict(MovedSide._FIELD_TYPES)["color"]
     assert is_compatible(square_color, moved_color)
 
 
@@ -885,7 +885,7 @@ def test_a_layout_that_does_not_pair_with_its_fields_is_refused_through_the_cata
         second: Uint8
 
     # A layout is a plain class attribute, so a rewrite of it arrives everywhere unchecked.
-    Rewritten.ACTIVE_FIELDS = (1, 1, 1)  # ty: ignore[invalid-assignment]
+    Rewritten.ACTIVE_FIELDS = (1, 1, 1)
 
     pairing = r"^the layout sets 3 positions, and the struct declares 2$"
     with pytest.raises(SSZTypeError, match=pairing):

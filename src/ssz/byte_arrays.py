@@ -308,7 +308,7 @@ class ByteVector(bytes, SSZType):
     __hash__ = bytes.__hash__
 
 
-class ByteList(SSZCollection[int]):
+class ByteList(SSZCollection[int, bytes]):
     r"""Variable-length SSZ byte array with 0 to N bytes."""
 
     LIMIT: ClassVar[int | None]
