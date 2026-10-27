@@ -64,6 +64,15 @@ def test_diff_checks_present_sections(tmp_path: Path, document: object) -> None:
     assert "checks passed, 0 failed" in result.stdout
 
 
+def test_diff_syntax_error_identifies_input(tmp_path: Path) -> None:
+    path = tmp_path / "malformed.json"
+    path.write_text('{"cases":[')
+    result = run("--diff", str(path))
+    assert result.returncode != 0
+    assert str(path) in result.stderr
+    assert "checks passed" not in result.stdout
+
+
 @pytest.mark.parametrize(
     "manifest",
     [
