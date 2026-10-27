@@ -1,6 +1,7 @@
 import Ssz
 import Tests.Hash.Sha256
 import Tests.Native
+import Tests.NativeColumns
 
 /-! Regression checks independent of the Python SSZ implementation. -/
 
@@ -50,6 +51,7 @@ def main : IO Unit := do
   Tests.Sha256.run
   -- The native kernels agree with their references and with the machine model.
   Tests.Native.run
+  Tests.NativeColumns.run
 
   -- A splice cannot turn a nonexistent outer node into a valid index.
   expect "zero outer index" ((gindexConcat 0 3).isOk == false)

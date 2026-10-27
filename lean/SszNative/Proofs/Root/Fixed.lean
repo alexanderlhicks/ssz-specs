@@ -144,20 +144,9 @@ theorem elementColumns_get (element : Desc) (b : ByteArray) (start stride count 
     ∀ length, (elementColumns element b start stride count width length).length = length ∧
       ∀ j (h : j < (elementColumns element b start stride count width length).length),
         (elementColumns element b start stride count width length)[j] =
-          rootsOf element b (start + width * j) stride count
-  -- No elements give no columns.
-  | 0 => ⟨by simp [elementColumns], fun j h => absurd h (by simp [elementColumns])⟩
-  | length + 1 => by
-    -- The new column is the last, at its element's place.
-    obtain ⟨len, get⟩ := elementColumns_get element b start stride count width length
-    rw [elementColumns]
-    refine ⟨by simp [len], fun j h => ?_⟩
-    by_cases old : j < length
-    · rw [List.getElem_append_left (by rw [len]; exact old), get j (by rw [len]; exact old)]
-    · have : j = length := by simp [len] at h; omega
-      subst this
-      rw [List.getElem_append_right (by rw [len]; exact Nat.le_refl _)]
-      simp [len]
+          rootsOf element b (start + width * j) stride count := by
+  intro length
+  simp [elementColumns]
 
 mutual
 
