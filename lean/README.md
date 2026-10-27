@@ -238,10 +238,14 @@ No theorem assumes SHA-256 is injective or collision-free.
 
 The native implementation adds four trusted pieces.
 The machine model in `SszNative/Asm/Semantics.lean` must describe what the processor does.
-The regressions run every kernel, in every layout, on both the model and the processor, and compare.
+The regressions run every kernel on the model and compare native results with their references.
+They report CPU/OS capabilities and actual nonempty kernel calls in every layout, plus bounds refusals and fallbacks.
+Unavailable instructions are explicitly skipped on hardware; a passing run without AVX-512 is not AVX-512 hardware evidence.
+On a dedicated AVX-512 runner, `SSZ_REQUIRE_AVX512=1 lake exe regressions` makes missing hardware a failure.
 The model leaves out faults and the direction flag, which the callers rule out, as its header says.
 The printer and the assembler must turn each instruction list into the machine code the model reads.
-The C bindings in `native/` must pick a kernel, split a count between the two hashing kernels, and check bounds, as their comments say.
+The C bindings in `native/` must pick a kernel, split counts between the hashing kernels, and check bounds, as their comments say.
+Gather falls back when its final source cursor would exceed the model theorem's address bound, even if that cursor is never read.
 The Lean compiler must run the tasks a wide tree is split into.
 
 Kernel checking trusts Lean's kernel and standard logical foundations.

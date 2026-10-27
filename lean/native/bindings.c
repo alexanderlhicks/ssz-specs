@@ -2,11 +2,40 @@
 //
 // Each binding computes exactly what its Lean definition's body computes.
 // The kernels are proved to compute those bodies on a model of the processor.
-// Every call meets the proofs' hypotheses: the output is a fresh array, apart from the inputs and the table.
+// Outputs are fresh arrays, apart from the inputs and the table. Gather also checks
+// the final source cursor required by its model theorem, even when it is not read.
 // Where the processor lacks the kernels' instructions, a binding calls the Lean body itself.
 
 #include <lean/lean.h>
 #include <stdint.h>
+
+// Test coverage is disabled in ordinary programs. Indices 0..8 count nonempty
+// single/dual/wide calls in PAIRS, COLUMNS, FIXED order; 9..10 are gather paths;
+// 11..13 are hash fallbacks, 14..16 their bounds refusals, and 17..18 gather
+// fallbacks and refusals. Tests inspect these separately from CPU availability.
+enum { COVERAGE_SIZE = 19 };
+static uint64_t coverage[COVERAGE_SIZE];
+static int coverage_enabled = 0;
+
+static void record_path(unsigned index) {
+  if (__atomic_load_n(&coverage_enabled, __ATOMIC_RELAXED))
+    __atomic_fetch_add(&coverage[index], 1, __ATOMIC_RELAXED);
+}
+
+LEAN_EXPORT lean_obj_res ssz_native_test_begin(void) {
+  for (unsigned i = 0; i < COVERAGE_SIZE; ++i) __atomic_store_n(&coverage[i], 0, __ATOMIC_RELAXED);
+  __atomic_store_n(&coverage_enabled, 1, __ATOMIC_RELAXED);
+  return lean_box(0);
+}
+
+LEAN_EXPORT uint64_t ssz_native_test_count(uint32_t index) {
+  return index < COVERAGE_SIZE ? __atomic_load_n(&coverage[index], __ATOMIC_RELAXED) : 0;
+}
+
+LEAN_EXPORT lean_obj_res ssz_native_test_end(void) {
+  __atomic_store_n(&coverage_enabled, 0, __ATOMIC_RELAXED);
+  return lean_box(0);
+}
 
 // The references, exported from Lean, for processors the kernels cannot run on.
 // Each takes ownership of its arrays.
@@ -95,13 +124,6 @@ static int kernels(void) {
   return k;
 }
 
-// Restricts the kernels to those whose bits a mask keeps, so tests can run each path on one processor.
-LEAN_EXPORT lean_obj_res ssz_native_restrict(uint32_t mask, lean_obj_arg world) {
-  (void)world;
-  __atomic_store_n(&detected, (detect() & (int)mask) | DETECTED, __ATOMIC_RELAXED);
-  return lean_io_result_mk_ok(lean_box(0));
-}
-
 // The three layouts the kernels come in, by the strides of their left and right nodes.
 enum layout { PAIRS, COLUMNS, FIXED };
 
@@ -113,14 +135,17 @@ static void hash(int k, enum layout layout, uint8_t *out, const uint8_t *left, c
   // Whole batches of sixteen go to the AVX-512 kernel when there is one.
   if (k & WIDE) {
     size_t batches = count / 16;
+    if (batches) record_path(3 * layout + 2);
     if (layout == PAIRS) ssz_sha256_avx512_pairs(out, left, right, batches, ssz_sha256_table);
     else if (layout == COLUMNS) ssz_sha256_avx512_columns(out, left, right, batches, ssz_sha256_table);
     else ssz_sha256_avx512_fixed(out, left, right, batches, ssz_sha256_table);
+    count -= 16 * batches;
+    if (count == 0) return;
+    // Only form pointers to the next nodes when they will be used. For PAIRS,
+    // advancing right after the last batch would pass the input's one-past end.
     out += 512 * batches;
     left += 16 * ls * batches;
     right += 16 * rs * batches;
-    count -= 16 * batches;
-    if (count == 0) return;
     // Without the SHA-NI kernel, a short tail runs as one batch padded with zeros.
     if (!(k & NARROW)) {
       uint8_t batch[1024] = {0};
@@ -130,6 +155,7 @@ static void hash(int k, enum layout layout, uint8_t *out, const uint8_t *left, c
         __builtin_memcpy(batch + 64 * i + 32, right + rs * i, 32);
       }
       ssz_sha256_avx512_pairs(digests, batch, batch + 32, 1, ssz_sha256_table);
+      record_path(2);
       __builtin_memcpy(out, digests, 32 * count);
       return;
     }
@@ -137,15 +163,17 @@ static void hash(int k, enum layout layout, uint8_t *out, const uint8_t *left, c
   // Pairs go two at a time to the interleaved kernel, and a last odd one alone.
   size_t twos = count / 2;
   if (twos) {
+    record_path(3 * layout + 1);
     if (layout == PAIRS) ssz_sha256_shani_dual_pairs(out, left, right, twos, ssz_sha256_table);
     else if (layout == COLUMNS) ssz_sha256_shani_dual_columns(out, left, right, twos, ssz_sha256_table);
     else ssz_sha256_shani_dual_fixed(out, left, right, twos, ssz_sha256_table);
+    count -= 2 * twos;
+    if (count == 0) return;
     out += 64 * twos;
     left += 2 * ls * twos;
     right += 2 * rs * twos;
-    count -= 2 * twos;
-    if (count == 0) return;
   }
+  if (count) record_path(3 * layout);
   if (layout == PAIRS) ssz_sha256_shani_pairs(out, left, right, count, ssz_sha256_table);
   else if (layout == COLUMNS) ssz_sha256_shani_columns(out, left, right, count, ssz_sha256_table);
   else ssz_sha256_shani_fixed(out, left, right, count, ssz_sha256_table);
@@ -165,22 +193,53 @@ static int fits(b_lean_obj_arg a, size_t offset, size_t stride, size_t n) {
   return size >= 32 && n - 1 <= (size - 32) / stride && offset <= size - 32 - stride * (n - 1);
 }
 
+// The gather proof interprets even its final, unused source cursor as a natural
+// address below 2^63. Check that premise without overflowing the count product.
+static int progress_fits(const uint8_t *src, size_t stride, size_t count) {
+  uintptr_t address = (uintptr_t)src;
+  const uintptr_t bound = UINT64_C(1) << 63;
+  return address <= bound && (stride == 0 || count <= (bound - address) / stride);
+}
+
 #endif
+
+// BaseIO Unit has no world argument and returns Unit directly in Lean 4.33.
+// Keep the hook available on fallback platforms as well as x86-64.
+LEAN_EXPORT lean_obj_res ssz_native_restrict(uint32_t mask) {
+#if defined(__x86_64__) && !defined(_WIN32)
+  __atomic_store_n(&detected, (detect() & (int)mask) | DETECTED, __ATOMIC_RELAXED);
+#else
+  (void)mask;
+#endif
+  return lean_box(0);
+}
+
+// BaseIO UInt32 returns the unboxed feature mask, without an IO.Result wrapper.
+LEAN_EXPORT uint32_t ssz_native_features(void) {
+#if defined(__x86_64__) && !defined(_WIN32)
+  return (uint32_t)(kernels() & (NARROW | WIDE | AVX));
+#else
+  return 0;
+#endif
+}
 
 LEAN_EXPORT lean_obj_res ssz_native_hash_pairs(b_lean_obj_arg src, size_t offset, size_t pairs) {
 #if defined(__x86_64__) && !defined(_WIN32)
   int k = kernels();
   // The kernels need every input byte present.
   // Anything else takes the reference's reading of it.
-  if ((k & (NARROW | WIDE)) && fits(src, offset, 64, pairs) && fits(src, offset + 32, 64, pairs)) {
+  int inside = fits(src, offset, 64, pairs) && fits(src, offset + 32, 64, pairs);
+  if ((k & (NARROW | WIDE)) && inside) {
     lean_object *out = alloc_bytes(32 * pairs);
     const uint8_t *in = lean_sarray_cptr(src) + offset;
     hash(k, PAIRS, lean_sarray_cptr(out), in, in + 32, pairs);
     return out;
   }
+  if (!inside) record_path(14);
 #endif
   // The caller keeps its borrowed array, so the reference gets a reference of its own.
   lean_inc(src);
+  record_path(11);
   return ssz_native_hash_pairs_reference(src, offset, pairs);
 }
 
@@ -188,15 +247,18 @@ LEAN_EXPORT lean_obj_res ssz_native_hash_columns(b_lean_obj_arg left, size_t lef
                                                size_t rightOffset, size_t count) {
 #if defined(__x86_64__) && !defined(_WIN32)
   int k = kernels();
-  if ((k & (NARROW | WIDE)) && fits(left, leftOffset, 32, count) && fits(right, rightOffset, 32, count)) {
+  int inside = fits(left, leftOffset, 32, count) && fits(right, rightOffset, 32, count);
+  if ((k & (NARROW | WIDE)) && inside) {
     lean_object *out = alloc_bytes(32 * count);
     hash(k, COLUMNS, lean_sarray_cptr(out), lean_sarray_cptr(left) + leftOffset,
          lean_sarray_cptr(right) + rightOffset, count);
     return out;
   }
+  if (!inside) record_path(15);
 #endif
   lean_inc(left);
   lean_inc(right);
+  record_path(12);
   return ssz_native_hash_columns_reference(left, leftOffset, right, rightOffset, count);
 }
 
@@ -204,14 +266,17 @@ LEAN_EXPORT lean_obj_res ssz_native_hash_fixed(b_lean_obj_arg left, size_t leftO
                                              size_t count) {
 #if defined(__x86_64__) && !defined(_WIN32)
   int k = kernels();
-  if ((k & (NARROW | WIDE)) && fits(left, leftOffset, 32, count) && lean_sarray_size(node) >= 32) {
+  int inside = fits(left, leftOffset, 32, count) && lean_sarray_size(node) >= 32;
+  if ((k & (NARROW | WIDE)) && inside) {
     lean_object *out = alloc_bytes(32 * count);
     hash(k, FIXED, lean_sarray_cptr(out), lean_sarray_cptr(left) + leftOffset, lean_sarray_cptr(node), count);
     return out;
   }
+  if (!inside) record_path(16);
 #endif
   lean_inc(left);
   lean_inc(node);
+  record_path(13);
   return ssz_native_hash_fixed_reference(left, leftOffset, node, count);
 }
 
@@ -225,7 +290,8 @@ LEAN_EXPORT lean_obj_res ssz_native_gather(b_lean_obj_arg src, size_t start, siz
                (count == 0 || stride == 0 ||
                 (count - 1 <= (size - start) / stride && width <= size - start - stride * (count - 1)));
   // The output, with its spare node, must have a size the allocator can represent.
-  if (inside && (count == 0 || slot <= (SIZE_MAX / 2) / count)) {
+  if (inside && progress_fits(lean_sarray_cptr(src) + start, stride, count) &&
+      (count == 0 || slot <= (SIZE_MAX / 2) / count)) {
     lean_object *out = alloc_bytes(slot * count);
     uint8_t *o = lean_sarray_cptr(out);
     const uint8_t *in = lean_sarray_cptr(src) + start;
@@ -243,9 +309,12 @@ LEAN_EXPORT lean_obj_res ssz_native_gather(b_lean_obj_arg src, size_t start, siz
       routine = ssz_gather_key;
     }
     routine(o, in, count, width, skip, pad);
+    if (count) record_path(routine == ssz_gather ? 9 : 10);
     return out;
   }
+  record_path(18);
 #endif
   lean_inc(src);
+  record_path(17);
   return ssz_native_gather_reference(src, start, stride, width, count, slot);
 }
