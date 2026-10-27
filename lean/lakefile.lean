@@ -60,3 +60,7 @@ extern_lib sszKernels pkg := do
 /-- Times the native implementation on beacon-chain workloads: `lake exe bench`. -/
 lean_exe bench where
   root := `Bench
+
+/-- Parse real Lean headers for the audited source-closure check. -/
+lean_exe importHeaders where
+  root := `scripts.ParseImports

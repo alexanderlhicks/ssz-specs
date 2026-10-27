@@ -1,61 +1,104 @@
-"""
-Check that every module is reachable from its audited proof root.
+"""Check audited import closure using Lean's own import-header parser."""
 
-Also check that no implementation module imports a proof.
-"""
-
-import re
+import argparse
+import json
+import subprocess
 import sys
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+type Module = tuple[str, ...]
 
-# Each tree: its implementation root, and the proof root that imports it and runs the axiom audit.
-trees = [("Ssz", "Ssz.Proofs"), ("SszNative", "SszNative.Proofs")]
-
-
-def imports(path: Path) -> list[str]:
-    """The modules one file imports, in order."""
-    found = []
-    for line in path.read_text().splitlines():
-        if match := re.match(r"^(?:public\s+)?import\s+(.+)", line):
-            found.extend(match[1].split("--", 1)[0].split())
-    return found
+PROJECT = Path(__file__).resolve().parents[1]
 
 
-def closure(start: str, modules: dict[str, Path]) -> set[str]:
-    """Every module of the tree reachable from one module."""
-    seen: set[str] = set()
+def imports(paths: list[Path]) -> dict[Path, set[Module]]:
+    """Parse actual Lean headers, including comments, escaped names and import modifiers."""
+    subprocess.run(
+        ["lake", "build", "importHeaders"], cwd=PROJECT, capture_output=True, text=True, check=True
+    )
+    result = subprocess.run(
+        [str(PROJECT / ".lake/build/bin/importHeaders"), *(str(path) for path in paths)],
+        cwd=PROJECT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    parsed = {}
+    for line in result.stdout.splitlines():
+        path, names = json.loads(line)
+        parsed[Path(path)] = {tuple(name) for name in names}
+    if set(parsed) != set(paths):
+        raise ValueError("Lean header parser did not return every requested source file")
+    return parsed
+
+
+def closure(start: Module, graph: dict[Module, set[Module]]) -> set[Module]:
+    """Find imported modules within the audited source tree."""
+    seen: set[Module] = set()
     pending = [start]
     while pending:
         module = pending.pop()
-        if module in seen or module not in modules:
-            continue
-        seen.add(module)
-        pending.extend(imports(modules[module]))
+        if module not in seen and module in graph:
+            seen.add(module)
+            pending.extend(graph[module])
     return seen
 
 
-failures = []
-for implementation, proofs in trees:
-    modules = {
-        ".".join(path.relative_to(root).with_suffix("").parts): path
-        for path in (root / implementation).rglob("*.lean")
-    }
-    modules[implementation] = root / f"{implementation}.lean"
-
-    # An unimported file could otherwise escape both the default build and the axiom audit.
-    missing = sorted(modules.keys() - closure(proofs, modules))
-    if missing:
-        heading = f"{implementation} modules missing from the audited import closure:"
-        failures.append(heading + "\n" + "\n".join(missing))
-
-    # A proof reached only through the implementation would make the split meaningless.
-    reached = closure(implementation, modules)
-    leaked = sorted(name for name in reached if name == proofs or name.startswith(proofs + "."))
+def check(root: Path) -> list[str]:
+    """Report source modules omitted from the proof root or proof imports in implementation."""
+    prefixes = ["Ssz"]
+    if (root / "SszNative").exists() or (root / "SszNative.lean").exists():
+        prefixes.append("SszNative")
+    modules = {}
+    for prefix in prefixes:
+        modules.update(
+            {
+                path.relative_to(root).with_suffix("").parts: path
+                for path in (root / prefix).rglob("*.lean")
+            }
+        )
+        modules[(prefix,)] = root / f"{prefix}.lean"
+    parsed = imports(sorted(modules.values()))
+    # Traverse one combined graph: native implementations may import reference
+    # implementations, but neither may reach a proof tree through that boundary.
+    graph = {name: parsed[path] for name, path in modules.items()}
+    failures = []
+    for prefix in prefixes:
+        owned = {name for name in modules if name[0] == prefix}
+        missing = sorted(owned - closure((prefix, "Proofs"), graph))
+        if missing:
+            failures.append(
+                f"{prefix} modules missing from the audited import closure:\n"
+                + "\n".join(".".join(name) for name in missing)
+            )
+    implementation = set().union(*(closure((prefix,), graph) for prefix in prefixes))
+    leaked = sorted(
+        name for name in implementation if len(name) >= 2 and name[:2] in {
+            (prefix, "Proofs") for prefix in prefixes
+        }
+    )
     if leaked:
-        heading = f"proof modules imported by the {implementation} implementation:"
-        failures.append(heading + "\n" + "\n".join(leaked))
+        failures.append(
+            "proof modules imported by the implementation:\n"
+            + "\n".join(".".join(name) for name in leaked)
+        )
+    return failures
 
-if failures:
-    sys.exit("\n\n".join(failures))
+
+def main() -> None:
+    """Check this package, or a source tree supplied for a regression test."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path, nargs="?", default=PROJECT)
+    args = parser.parse_args()
+    try:
+        failures = check(args.root.resolve())
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.stderr or error.stdout or str(error))
+    except (OSError, ValueError) as error:
+        sys.exit(str(error))
+    if failures:
+        sys.exit("\n\n".join(failures))
+
+
+if __name__ == "__main__":
+    main()
