@@ -117,6 +117,11 @@ def hex (b : ByteArray) : String :=
 def rooted (d : Desc) (b : ByteArray) : Except String ByteArray :=
   (hashTreeRoot d b).mapError reprStr
 
+/-- Verification must succeed, not merely return without an encoding error. -/
+def verificationResult (result : Except Err Bool) : Except String ByteArray := do
+  let verified ← result.mapError reprStr
+  if verified then return zeroNode else throw "branch verification returned false"
+
 def main : IO Unit := do
   let limit := 2 ^ 40
   -- A list of a hundred thousand integers.
@@ -159,12 +164,10 @@ def main : IO Unit := do
   let branch ← checked "validator branch" ((buildProof validatorList validators index).mapError reprStr)
   let leaf ← checkedRoot "validator leaf" ((nodeRoot validatorList validators index).mapError reprStr)
   let root ← checkedRoot "validator root" (rooted validatorList validators)
-  let verified ← checked "branch verification" ((verifyMerkleProof leaf branch index root).mapError reprStr)
-  unless verified do throw (IO.userError "branch verification returned false")
-  IO.println s!"branch of {branch.length} nodes, verified {verified}"
+  let _ ← checkedRoot "branch verification" (verificationResult (verifyMerkleProof leaf branch index root))
+  IO.println s!"branch of {branch.length} nodes, verified true"
   time "List[Validator] 1M branch" input fun b => do
     let _ ← (buildProof validatorList b index).mapError reprStr
     return zeroNode
-  time "List[Validator] 1M branch verification" (← IO.mkRef leaf) fun leaf => do
-    let verified ← (verifyMerkleProof leaf branch index root).mapError reprStr
-    if verified then return zeroNode else throw "branch verification returned false"
+  time "List[Validator] 1M branch verification" (← IO.mkRef leaf) fun leaf =>
+    verificationResult (verifyMerkleProof leaf branch index root)
