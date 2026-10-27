@@ -14,12 +14,21 @@ theorem deserialize_head (d : Desc) (data : Bytes) (fixed : hasWidth d = true) :
       (deserialize d data).map (fun _ => ()) = .error (.scope (fixedWidth d) data.size)) := by
   -- Each fixed-size kind of type is taken in turn.
   cases d with
-  | bool | uint | byteVector | bitVector =>
+  | bool | uint | bitVector =>
     -- A scalar is never composite, so only its width can be wrong.
     refine ⟨fun h => by simp [composite] at h, fun _ wrong => ?_⟩
     simp only [fixedWidth] at wrong ⊢
     simp [deserialize, wrong, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind,
       Except.map]
+  | byteVector length =>
+    -- A byte vector checks the composite ceiling before its exact width.
+    refine ⟨fun h => ?_, fun small wrong => ?_⟩
+    · simp [deserialize, h.2, throw, throwThe, MonadExceptOf.throw,
+        Bind.bind, Except.bind, Except.map]
+    · simp only [composite, true_and, offsetBound] at small
+      simp only [fixedWidth] at wrong ⊢
+      simp [deserialize, small, wrong, throw, throwThe, MonadExceptOf.throw,
+        Bind.bind, Except.bind, Except.map]
   | vector element length =>
     -- A vector of fixed-size elements knows its element width before reading.
     simp only [hasWidth] at fixed

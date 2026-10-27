@@ -253,9 +253,13 @@ theorem progressiveList_root (element : Desc) (limit : Option Nat) (ih : Agrees 
   obtain ⟨counted, _, _, inside', small', leaves, layout, chunks⟩ :=
     sequence_leaves facts element ih (wellFormed_progressiveList sound) b start stop ordered inside small _ slices
       values cut decoded 0 none (some (lengthWord values.length))
+  have within := listSlices_within cut
+  have countedValues := (deserializeEach_get element slices values decoded).1
+  rw [← countedValues] at within
+  have bound := boundCheck_of_withinBound limit values.length within
   -- Both sides build a progressive spine over the leaves, then mix in the count.
   rw [hashTreeRoot_unfold]
-  simp only [merkleLayout, layout, chunks, finishLayout, Option.map_none, Bind.bind, Except.bind, pure,
+  simp only [merkleLayout, bound, layout, chunks, finishLayout, Option.map_none, Bind.bind, Except.bind, pure,
     Except.pure]
   have tree := progressive_root facts _ _ _ rfl inside' small'
   rw [rootOf]

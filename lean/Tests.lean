@@ -50,11 +50,97 @@ example (left right : Bytes) :
   subst level
   rfl
 
+-- The byte aliases meet the composite ceiling before checking their own length or limit.
+-- These symbolic checks require no allocation of a four-gigabyte test input.
+private theorem nativeByteVectorCeiling (b : ByteArray) (length : Nat)
+    (large : b.size ≥ 2 ^ 32) :
+    Native.validate (.byteVector length) b = .error (.offsetOverflow b.size) := by
+  simp [Native.validate, Native.validateRange, Native.hasWidth, Native.validateFixed,
+    Native.composite, bytesPerOffset, large, throw, throwThe, MonadExceptOf.throw,
+    Bind.bind, Except.bind]
+
+example (b : ByteArray) (limit : Nat) (large : b.size ≥ 2 ^ 32) :
+    Native.validate (.byteList limit) b = .error (.offsetOverflow b.size) := by
+  simp [Native.validate, Native.validateRange, Native.hasWidth, Native.validateVariable,
+    Native.offsetBound, bytesPerOffset, large, throw, throwThe, MonadExceptOf.throw,
+    Bind.bind, Except.bind]
+
+example (b : ByteArray) (length : Nat) (large : b.size ≥ 2 ^ 32) :
+    (Native.Schema.compile (.byteVector length)).validate b = .error (.offsetOverflow b.size) := by
+  simpa [Native.Schema.compile, Native.Schema.validate] using nativeByteVectorCeiling b length large
+
+example (b : ByteArray) (large : b.size ≥ 2 ^ 32) :
+    (Native.Schema.compile (.container ["bytes"] [.byteVector (2 ^ 32)])).validate b =
+      .error (.offsetOverflow b.size) := by
+  simp [Native.Schema.compile, Native.Schema.validate, Native.plain, Native.plainAll,
+    Native.composite, large]
+
+private def sameVerdict (left right : Except Err Bool) : Bool :=
+  match left, right with
+  | .ok a, .ok b => a == b
+  | .error a, .error b => a == b
+  | _, _ => false
+
+private def checkNativeIntegration : IO Unit := do
+  let z : ByteArray := ⟨zeroChunk⟩
+  let empty := ByteArray.empty
+  let root := Native.combine z z
+  -- Wrong-width expected roots answer false; malformed requests take precedence over widths.
+  expect "native short root, single proof"
+    ((Native.verifyMerkleProof z [z] 2 empty).toOption == some false)
+  expect "native short root, multiproof"
+    ((Native.verifyMerkleMultiproof [z] [z] [2] empty).toOption == some false)
+  for (leaf, proof, index, expected) in
+      [(z, [z], 2, root), (z, [z], 2, empty), (empty, [], 0, empty),
+       (empty, [], 1, empty), (empty, [z, z], 2, empty), (empty, [z], 2, empty)] do
+    expect s!"native single-proof outcome at {index}"
+      (sameVerdict (Native.verifyMerkleProof leaf proof index expected)
+        (verifyMerkleProof leaf.data (proof.map (·.data)) index expected.data))
+  for (leaves, proof, indices, expected) in
+      [([z], [z], [2], root), ([z], [z], [2], empty), ([], [], [], empty),
+       ([empty], [], [], empty), ([empty, empty], [], [2, 2], empty),
+       ([empty, empty], [], [2, 4], empty), ([empty], [z, z], [2], empty),
+       ([empty], [z], [2], empty)] do
+    expect "native multiproof outcome, including combined faults"
+      (sameVerdict (Native.verifyMerkleMultiproof leaves proof indices expected)
+        (verifyMerkleMultiproof (leaves.map (·.data)) (proof.map (·.data)) indices expected.data))
+  -- Selector validation remains decoder-equivalent even for an illegal declaration.
+  for selector in [0, 128] do
+    let d := Desc.compatibleUnion [selector] [.bool]
+    let b : ByteArray := ⟨#[UInt8.ofNat selector, 1]⟩
+    refusedWith "native reserved selector" (Native.validate d b) "UNION_SELECTOR_RANGE"
+  -- Byte-vector roots use raw packed bytes after decoding; their layout is independent of encoding limits.
+  let bytes : Bytes := (Array.range 33).map UInt8.ofNat
+  let examples : List (Desc × Value) :=
+    [(.byteVector 33, .bytes bytes),
+     (.container ["bytes", "flag"] [.byteVector 33, .bool], .seq [.bytes bytes, .bool true]),
+     (.vector (.byteVector 33) 2, .seq [.bytes bytes, .bytes bytes]),
+     (.container ["bytes", "flag"] [.byteList 33, .bool], .seq [.bytes bytes, .bool false]),
+     (.progressiveList .bool (some 1), .seq [.bool true]),
+     (.progressiveBitList (some 1), .bits #[true]),
+     (.compatibleUnion [1, 127] [.bool, .bool], .union 127 (.bool true))]
+  for (d, value) in examples do
+    let .ok encoded := serialize d value | throw (IO.userError "native integration fixture refused")
+    let .ok reference := hashTreeRoot d value | throw (IO.userError "native integration fixture has no root")
+    let b : ByteArray := ⟨encoded⟩
+    expect "native validation after reference integration" ((Native.validate d b).isOk)
+    expect "native root after reference integration"
+      (((Native.hashTreeRoot d b).map (·.data)).toOption == some reference)
+    expect "compiled schema after reference integration"
+      ((((Native.Schema.compile d).hashTreeRoot b).map (·.data)).toOption == some reference)
+    for index in [2:8] do
+      expect "native node after reference integration"
+        (match Native.nodeRoot d b index, nodeRoot d value index with
+        | .ok native, .ok spec => native.data == spec
+        | .error native, .error spec => native == spec
+        | _, _ => false)
+
 def main : IO Unit := do
   -- Published vectors validate SHA-256 before it is used in the SSZ regressions.
   Tests.Sha256.run
   -- The native kernels agree with their references and with the machine model.
   Tests.Native.run
+  checkNativeIntegration
 
   -- A splice cannot turn a nonexistent outer node into a valid index.
   expect "zero outer index" ((gindexConcat 0 3).isOk == false)

@@ -70,15 +70,15 @@ theorem climbBranch_eq (index level : Nat) (node : ByteArray) (proof : List Byte
 /-- One leaf and its branch are verified exactly as the specification verifies them. -/
 theorem verifyMerkleProof_eq (leaf : ByteArray) (proof : List ByteArray) (index : Nat) (root : ByteArray) :
     verifyMerkleProof leaf proof index root = Ssz.verifyMerkleProof leaf.data (proof.map (·.data)) index root.data := by
-  -- Both read the same checks, then compare the same climbed node.
+  -- Both reconstruct before checking operand widths and comparing the root.
   simp only [verifyMerkleProof, Ssz.verifyMerkleProof, calculateMerkleRoot, checkNode_eq, checkNodes_eq,
     List.length_map, beq_data, climbBranch_eq]
-  -- The checks run in the same order, and only the place the comparison sits differs.
-  cases checkChunk leaf.data <;> cases checkChunk root.data <;> cases checkChunks (proof.map (·.data)) <;>
-    cases gindexLength index <;> try rfl
-  rename_i depth
-  by_cases same : proof.length = depth <;> simp [same, bind, Except.bind, pure, Except.pure, throw, throwThe,
-    MonadExceptOf.throw]
+  cases gindexLength index with
+  | error e => rfl
+  | ok depth =>
+    by_cases same : proof.length = depth <;>
+      simp [same, Bind.bind, Except.bind, pure, Except.pure, throw, throwThe,
+        MonadExceptOf.throw]
 
 /-- Indexed nodes with their bytes, as the specification holds them. -/
 def dataNodes (nodes : List (Nat × ByteArray)) : List (Nat × Bytes) :=
@@ -169,11 +169,9 @@ private theorem zip_data (indices : List Nat) (nodes : List ByteArray) :
 theorem verifyMerkleMultiproof_eq (leaves proof : List ByteArray) (indices : List Nat) (root : ByteArray) :
     verifyMerkleMultiproof leaves proof indices root =
       Ssz.verifyMerkleMultiproof (leaves.map (·.data)) (proof.map (·.data)) indices root.data := by
-  simp only [verifyMerkleMultiproof, Ssz.verifyMerkleMultiproof, calculateMultiMerkleRoot, checkNode_eq,
+  simp only [verifyMerkleMultiproof, Ssz.verifyMerkleMultiproof, calculateMultiMerkleRoot,
     checkNodes_eq, List.length_map]
   -- The checks run in the same order on the same widths and counts.
-  cases checkChunk root.data <;> cases checkChunks (leaves.map (·.data)) <;>
-    cases checkChunks (proof.map (·.data)) <;> try rfl
   by_cases leafCount : leaves.length = indices.length
   · cases found : getHelperIndices indices with
     | error e => simp [leafCount, bind, Except.bind]
@@ -198,7 +196,8 @@ theorem verifyMerkleMultiproof_eq (leaves proof : List ByteArray) (indices : Lis
           List.foldl_map, List.map_append, List.foldl_append, bind, Except.bind, pure, Except.pure]
         rw [depth, ← folded]
         -- Comparing arrays compares their bytes.
-        cases foldToRoot _ _ <;> rfl
+        cases foldToRoot _ _ <;> cases checkChunks (leaves.map (·.data)) <;>
+          cases checkChunks (proof.map (·.data)) <;> rfl
       · simp [leafCount, proofCount, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
   · simp [leafCount, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
 

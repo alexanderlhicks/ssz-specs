@@ -65,12 +65,20 @@ theorem plan_sound (d : Desc) : ∀ (b : ByteArray) (start : Nat), hasWidth d = 
     -- The byte decodes to false, to true, or is refused as no bit at all.
     split <;> simp_all [Except.map, plan, checkProbes, Probe.check, pure, Except.pure, Bind.bind, Except.bind,
       throw, throwThe, MonadExceptOf.throw]
-  | uint width | byteVector width =>
+  | uint width =>
     -- Integers and byte arrays decode from any bytes of their width, and have no probes.
     intro b start _ _ inside
     have size := slice_size b start (start + width) inside
     simp only [fixedWidth] at size ⊢
     simp [deserialize, size, plan, checkProbes, pure, Except.pure, Except.map]
+  | byteVector width =>
+    -- Byte aliases obey the same composite size ceiling as vectors of uint8.
+    intro b start _ bounded inside
+    have small := bounded rfl
+    have size := slice_size b start (start + width) inside
+    simp only [fixedWidth, offsetBound] at small
+    simp [fixedWidth, deserialize, size, plan, checkProbes, pure, Except.pure, Except.map,
+      show ¬ width ≥ 2 ^ (8 * bytesPerOffset) by omega]
   | bitVector length =>
     -- A bit vector is refused only for set padding bits in its last byte.
     intro b start _ _ inside

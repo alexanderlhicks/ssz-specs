@@ -237,13 +237,14 @@ def climbBranch (index : Nat) : (level : Nat) → (node : ByteArray) → List By
 /-- Whether one leaf and its branch rebuild the expected root. -/
 def verifyMerkleProof (leaf : ByteArray) (proof : List ByteArray) (index : Nat) (root : ByteArray) :
     Except Err Bool := do
-  -- A short node and a long one must not pass as two whole nodes.
-  checkNode leaf
-  checkNode root
-  checkNodes proof
+  -- Reconstruct first, preserving the reference's index/count error precedence.
   let depth ← gindexLength index
   if proof.length != depth then throw (.branchLength depth proof.length)
-  return climbBranch index 0 leaf proof == root
+  let rebuilt := climbBranch index 0 leaf proof
+  -- Width checks protect hashed operands; the expected root is only compared.
+  checkNode leaf
+  checkNodes proof
+  return rebuilt == root
 
 /-- The node held at an index, where one is held. -/
 def nodeAt (nodes : List (Nat × ByteArray)) (index : Nat) : Option ByteArray :=
@@ -281,15 +282,15 @@ def foldToRoot : Nat → List (Nat × ByteArray) → Except Err ByteArray
 /-- Whether several leaves and their nodes rebuild the expected root. -/
 def verifyMerkleMultiproof (leaves proof : List ByteArray) (indices : List Nat) (root : ByteArray) :
     Except Err Bool := do
-  checkNode root
-  checkNodes leaves
-  checkNodes proof
   if leaves.length != indices.length then throw (.leafCount indices.length leaves.length)
   let helpers ← getHelperIndices indices
   if proof.length != helpers.length then throw (.proofLength helpers.length proof.length)
   let nodes := indices.zip leaves ++ helpers.zip proof
   -- No node sits below the deepest index given, so that is where the fold starts.
   let deepest := (nodes.map fun (index, _) => levelOf index).foldl max 0
-  return (← foldToRoot deepest nodes) == root
+  let rebuilt ← foldToRoot deepest nodes
+  checkNodes leaves
+  checkNodes proof
+  return rebuilt == root
 
 end Ssz.Native

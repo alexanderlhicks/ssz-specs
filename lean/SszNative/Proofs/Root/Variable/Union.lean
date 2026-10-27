@@ -23,6 +23,7 @@ theorem option_search (b : ByteArray) (s e : Nat) :
     split at read
     -- A matching option decodes the rest of the range and is the root's choice.
     · rename_i same
+      obtain ⟨_, _, read⟩ := checksPassed read
       simp only [Bind.bind, Except.bind, pure, Except.pure] at read
       split at read
       · cases read
@@ -75,12 +76,13 @@ theorem union_root (selectors : List Nat) (options : List Desc) (ih : ∀ option
     option_search b (start + 1) stop selectors options _ _ v read
   have optionSound := allWellFormed_mem options (wellFormed_union sound) option member
   have rooted := ih option member optionSound b (start + 1) stop inner (by omega) inside small decoded
-  have byte : (b.get! start).toNat ≤ 0xFF := by have := (b.get! start).toNat_lt; omega
+  have ranged := checkSelector_of_range (wellFormed_union_selectors sound _
+    (lookupOption_selector selectors options _ option looked))
   -- The specification roots the option under a capacity of one, then mixes in the selector.
   rw [hashTreeRoot_unfold]
-  simp only [merkleLayout, looked, selectorWord, show ¬ (b.get! start).toNat > 0xFF by omega, if_false,
+  simp only [merkleLayout, looked, selectorWord, ranged,
     MerkleLayout.nesting, leafChunks, List.mapM_cons, List.mapM_nil, slotRoot, rooted, finishLayout,
-    Bind.bind, Except.bind, pure, Except.pure, throw, throwThe, MonadExceptOf.throw]
+    Bind.bind, Except.bind, pure, Except.pure]
   -- The native root does the same, with the selector as a length node.
   rw [rootOf]
   simp only [root, bounded_single]

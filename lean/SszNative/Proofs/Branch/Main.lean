@@ -41,7 +41,9 @@ theorem laysOut (d : Desc) : LaysOut d := by
     · cases read
     rename_i bits decoded
     cases read
-    exact ⟨_, _, rfl, rfl, bits_agrees limit b s e o i small bits decoded none⟩
+    refine ⟨_, _, rfl, ?_, bits_agrees limit b s e o i small bits decoded none⟩
+    simp only [merkleLayout, boundCheck_of_withinBound limit bits.size (unpackDelimited_within decoded),
+      MerkleLayout.packing, Bind.bind, Except.bind, pure, Except.pure]
   | .vector element length => exact vector_agrees element length sound b s e v o i small read
   | .list element limit => exact list_agrees element limit sound b s e v o i small read
   | .progressiveList element limit => exact progressiveList_agrees element limit sound b s e v o i small read

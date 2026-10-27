@@ -34,7 +34,22 @@ theorem fixed_agrees (d : Desc) (leaf : d = .bool ∨ (∃ w, d = .uint w) ∨ �
   have wrote := serialize_of_deserialize d sound _ v read
   have layout : merkleLayout d v = .ok ⟨.packed (packBytes (slice b s e)), some (nodesFor (e - s)), none⟩ := by
     have fixed : merkleLayout d v = fixedLeaf d v := by
-      rcases leaf with rfl | ⟨w, rfl⟩ | ⟨n, rfl⟩ <;> cases v <;> rfl
+      rcases leaf with rfl | ⟨w, rfl⟩ | ⟨n, rfl⟩
+      · rfl
+      · rfl
+      · -- The raw-byte layout agrees with fixedLeaf on successfully decoded byte vectors.
+        have decoded := read
+        simp only [deserialize, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind,
+          pure, Except.pure] at decoded
+        split at decoded
+        · cases decoded
+        split at decoded
+        · cases decoded
+        rename_i sized
+        simp at sized
+        cases decoded
+        rw [fixedLeaf, wrote]
+        simp [merkleLayout, sized, MerkleLayout.packing, Bind.bind, Except.bind, pure, Except.pure]
     rw [fixed, fixedLeaf, wrote]
     simp [Bind.bind, Except.bind, pure, Except.pure, MerkleLayout.packing, packBytes_count b s e i]
   have laid : layoutOf d b s e = .ok ⟨.packed (packRange b s e) (nodesFor (e - s)), some (nodesFor (e - s)), none⟩ := by
@@ -49,6 +64,8 @@ theorem byteList_agrees (limit : Nat) (b : ByteArray) (s e : Nat) (v : Value) (o
       Corresponds b E L := by
   -- Decoding keeps the bytes, which fit the limit.
   simp only [deserialize, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind, pure, Except.pure] at read
+  split at read
+  · cases read
   split at read
   · cases read
   rename_i bound

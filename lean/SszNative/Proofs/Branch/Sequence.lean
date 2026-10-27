@@ -210,6 +210,11 @@ theorem progressiveList_agrees (element : Desc) (limit : Option Nat)
   cases read
   obtain ⟨_, L, layout, c⟩ := counted_agrees element limit (wellFormed_progressiveList sound) b s e o i small
     slices values cut decoded none
-  exact ⟨_, L, rfl, layout, c⟩
+  have within := listSlices_within cut
+  have countedValues := (RootProof.deserializeEach_get element slices values decoded).1
+  rw [← countedValues] at within
+  have bound := boundCheck_of_withinBound limit values.length within
+  refine ⟨_, L, rfl, ?_, c⟩
+  simpa only [merkleLayout, bound, Bind.bind, Except.bind] using layout
 
 end Ssz.Native.BranchProof

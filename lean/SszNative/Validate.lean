@@ -139,7 +139,7 @@ end
 
 /-- Whether deserializing the type first bounds its size by what four-byte offsets can name. -/
 def composite : Desc → Bool
-  | .vector _ _ | .container _ _ | .progressiveContainer _ _ _ => true
+  | .byteVector _ | .byteList _ | .vector _ _ | .container _ _ | .progressiveContainer _ _ _ => true
   | _ => false
 
 /-- Refuses a range against a fixed-size type of a width: the size checks, then the probes. -/
@@ -329,7 +329,9 @@ termination_by (sizeOf d, 1, 0)
 def validateVariable (d : Desc) (b : ByteArray) (start stop : Nat) : Except Err Unit := do
   let size := stop - start
   match d with
-  | .byteList limit => if size > limit then throw (.overLimit limit size)
+  | .byteList limit =>
+    if size ≥ offsetBound then throw (.offsetOverflow size)
+    if size > limit then throw (.overLimit limit size)
   | .bitList limit => discard <| delimitedCount b start stop (some limit)
   | .progressiveBitList limit => discard <| delimitedCount b start stop limit
   | .vector element length => validateRanges element b (← vectorRanges element length b start stop)
@@ -375,7 +377,9 @@ termination_by fields => (sizeOf fields, 2, 0)
 def validateOption : List Nat → List Desc → Nat → ByteArray → Nat → Nat → Except Err Unit
   | [], [], selector, _, _, _ => .error (.unknownSelector selector)
   | chosen :: selectors, option :: options, selector, b, start, stop =>
-    if chosen == selector then validateRange option b start stop
+    if chosen == selector then do
+      checkSelector selector
+      validateRange option b start stop
     else validateOption selectors options selector b start stop
   | _, _, _, _, _, _ => .error .badDeclaration
 termination_by _ options => (sizeOf options, 2, 0)

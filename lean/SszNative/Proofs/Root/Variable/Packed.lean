@@ -19,6 +19,8 @@ theorem byteList_root (limit : Nat) (b : ByteArray) (start stop : Nat) (v : Valu
   simp only [deserialize, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind, pure, Except.pure] at read
   split at read
   · cases read
+  split at read
+  · cases read
   rename_i bound
   cases read
   have packed := packRange_nodes b start stop ordered inside (by unfold Small at small; omega)
@@ -86,8 +88,9 @@ theorem progressiveBitList_root (limit : Option Nat) (b : ByteArray) (start stop
     have nonempty := (unpackDelimited_ok decoded).1
     rw [slice_size b start stop inside] at nonempty
     rw [← counted]; simp only [bitCount]; have := highest_lt (b.get! (stop - 1)); omega
+  have bound := boundCheck_of_withinBound limit bits.size (unpackDelimited_within decoded)
   rw [hashTreeRoot_unfold]
-  simp only [merkleLayout, MerkleLayout.packing, leafChunks, finishLayout, Bind.bind, Except.bind, pure,
+  simp only [merkleLayout, bound, MerkleLayout.packing, leafChunks, finishLayout, Bind.bind, Except.bind, pure,
     Except.pure]
   -- The packed bits go on a spine.
   have tree := progressive_root facts (bitNodes b start bits.size) _ (packedBits bits) nodes (by omega)

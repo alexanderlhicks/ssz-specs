@@ -154,7 +154,7 @@ theorem validateOption_sound (b : ByteArray) (start stop : Nat) (ordered : start
     by_cases same : (chosen == selector) = true
     · simp only [same, ↓reduceIte, each option (by simp) b start stop ordered inside, Bind.bind, Except.bind,
         pure, Except.pure, Except.map]
-      cases deserialize option (slice b start stop) <;> rfl
+      cases checkSelector selector <;> cases deserialize option (slice b start stop) <;> rfl
     · simp only [same, Bool.false_eq_true, ↓reduceIte]
       exact validateOption_sound b start stop ordered inside selectors options selector
         (fun o m => each o (by simp [m]))
@@ -202,13 +202,13 @@ theorem validate_sound (d : Desc) : AgreesEverywhere d := by
     rw [validateRange, if_pos (show hasWidth _ = true from rfl)]
     exact validateFixed_sound _ rfl b start stop ordered inside
   | byteList limit =>
-    -- A byte list is refused only for exceeding its limit.
+    -- Byte lists check the composite ceiling before the declared limit.
     intro b start stop ordered inside
     unfold Agrees
     rw [validateRange, if_neg (by simp [hasWidth]), validateVariable]
-    simp [deserialize, slice_size b start stop inside, throw, throwThe, MonadExceptOf.throw, Bind.bind,
-      Except.bind, Except.map, pure, Except.pure]
-    split <;> rfl
+    simp [deserialize, offsetBound, slice_size b start stop inside, throw, throwThe,
+      MonadExceptOf.throw, Bind.bind, Except.bind, Except.map, pure, Except.pure]
+    split <;> first | rfl | (split <;> rfl)
   | bitList limit =>
     -- Bit lists are refused for their delimiter alike on both sides.
     intro b start stop ordered inside

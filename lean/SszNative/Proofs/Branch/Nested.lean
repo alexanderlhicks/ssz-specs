@@ -234,14 +234,15 @@ theorem union_agrees (selectors : List Nat) (options : List Desc)
   obtain ⟨option, inner, member, looked, rfl, decoded, _⟩ :=
     RootProof.option_search b (s + 1) e selectors options _ _ v read
   have optionSound := allWellFormed_mem options (wellFormed_union sound) option member
-  have byte : (b.get! s).toNat ≤ 0xFF := by have := (b.get! s).toNat_lt; omega
+  have ranged := checkSelector_of_range (wellFormed_union_selectors sound _
+    (lookupOption_selector selectors options _ option looked))
   refine ⟨⟨.nested (.listed [some (option, s + 1, e)]), some 1, some (lengthNode (b.get! s).toNat)⟩,
     ⟨.nested [some (option, inner)], some 1, some (lengthWord (b.get! s).toNat)⟩, ?_, ?_,
     ⟨listed_agrees b _ _ (.cons ⟨rfl, optionSound, by omega, i, decoded⟩ .nil), rfl,
       by simp only [Option.map_some, RootProof.facts_hold.lengthNode], ?_⟩⟩
   · simp only [layoutOf, looked, Bind.bind, Except.bind, pure, Except.pure]
-  · simp only [merkleLayout, looked, selectorWord, show ¬ (b.get! s).toNat > 0xFF by omega, if_false,
-      MerkleLayout.nesting, Bind.bind, Except.bind, pure, Except.pure, throw, throwThe, MonadExceptOf.throw]
+  · simp only [merkleLayout, looked, selectorWord, ranged,
+      MerkleLayout.nesting, Bind.bind, Except.bind, pure, Except.pure]
   · simp only [EncodedLayout.count, Slots.count, List.length_singleton]
     have := USize.le_size
     omega

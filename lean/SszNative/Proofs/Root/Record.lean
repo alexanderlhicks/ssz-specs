@@ -128,7 +128,7 @@ theorem join_slices (data : Bytes) (width : Nat) :
       rw [List.range_succ, List.map_append, List.foldl_append, ih (by rw [Nat.mul_succ] at fits; omega)]
       simp only [List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
       rw [Nat.mul_comm k width, Nat.mul_comm (k + 1) width,
-        extract_join data (Nat.zero_le _) (by rw [Nat.mul_succ]; omega) fits]
+        extract_join data (Nat.zero_le _) (by rw [Nat.mul_succ]; omega)]
   intro count whole
   -- The prefix of all the slices is the whole data.
   rw [prefix_ count (by omega), whole, Array.extract_size]
@@ -253,11 +253,29 @@ def RootsFromBytes (d : Desc) : Prop :=
 theorem recordRoot_spec (d : Desc) : RootsFromBytes d := by
   -- Types and their field lists are handled together, by mutual induction.
   induction d using Desc.rec (motive_2 := fun fields => ∀ field ∈ fields, RootsFromBytes field) with
-  | bool | uint | byteVector =>
+  | bool | uint =>
     -- A scalar or byte vector's leaf is its own encoding, which decoding preserves.
     intro _ sound data value read budget deep
     obtain ⟨b, rfl⟩ : ∃ b, budget = b + 1 := ⟨budget - 1, by simp [Desc.nesting] at deep; omega⟩
     exact leaf_root b _ value data rfl (serialize_of_deserialize _ sound data value read)
+  | byteVector length =>
+    -- Rooting the byte alias uses its raw bytes, independently of serialization's ceiling.
+    intro _ sound data value read budget deep
+    obtain ⟨b, rfl⟩ : ∃ b, budget = b + 1 := ⟨budget - 1, by simp [Desc.nesting] at deep; omega⟩
+    simp only [deserialize, throw, throwThe, MonadExceptOf.throw, Bind.bind, Except.bind,
+      pure, Except.pure] at read
+    split at read
+    · cases read
+    split at read
+    · cases read
+    rename_i sized
+    simp at sized
+    cases read
+    have layout : merkleLayout (.byteVector length) (.bytes data) =
+        .ok ⟨.packed (packBytes data), some (packBytes data).size, none⟩ := by
+      simp [merkleLayout, sized, MerkleLayout.packing, pure, Except.pure]
+    rw [rootAt_of_layout b _ _ _ _ _ layout (layoutChunksAt_packed ..) (Nat.le_refl _)]
+    simp [recordRoot, packedRoot, chunksForBytes]
   | bitVector length =>
     -- A bit vector's leaf is its encoding, under the capacity its bit length gives.
     intro _ sound data value read budget deep
