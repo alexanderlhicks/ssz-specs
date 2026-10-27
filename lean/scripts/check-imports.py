@@ -54,7 +54,15 @@ def check(root: Path) -> list[str]:
     # Prune build/dependency environments before walking rather than parsing caches.
     modules = {}
     for directory, subdirs, files in root.walk():
-        subdirs[:] = [name for name in subdirs if name not in EXCLUDED_DIRS]
+        if directory == root:
+            subdirs[:] = [name for name in subdirs if name not in EXCLUDED_DIRS]
+            files = [name for name in files if name not in EXCLUDED_DIRS]
+        # Path.walk lists directory symlinks among files when follow_symlinks is false.
+        # Reject aliases rather than silently omitting a namespace from the graph.
+        for name in [*subdirs, *files]:
+            path = directory / name
+            if path.is_symlink() and path.is_dir():
+                raise ValueError(f"source-directory symlinks are unsupported: {path}")
         for filename in files:
             path = directory / filename
             if path.suffix == ".lean":
@@ -62,8 +70,11 @@ def check(root: Path) -> list[str]:
     for prefix in prefixes:
         modules[(prefix,)] = root / f"{prefix}.lean"
     parsed = imports(sorted(modules.values()))
-    # Traverse one combined graph: native implementations may import reference
-    # implementations, but neither may reach a proof tree through that boundary.
+    # Traverse the combined graph across both implementation trees and local bridges.
+    for path, names in parsed.items():
+        for name in names:
+            if name and name[0] in EXCLUDED_DIRS:
+                raise ValueError(f"{path}: import from excluded root directory: {'.'.join(name)}")
     graph = {name: parsed[path] for name, path in modules.items()}
     failures = []
     for prefix in prefixes:
