@@ -95,6 +95,25 @@ def test_shared_module_can_cover_owned_implementation(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_directory_alias_cannot_hide_acyclic_proof_dependency(tmp_path: Path) -> None:
+    tree(
+        tmp_path,
+        "import Alias.Helper\nimport Ssz.Orphan\n",
+        "import Ssz\nimport Ssz.Proofs.Helper\n",
+    )
+    (tmp_path / "Ssz/Proofs").mkdir()
+    (tmp_path / "Ssz/Proofs/Helper.lean").write_text("def helper := 1\n")
+    alias = tmp_path / "Alias"
+    try:
+        alias.symlink_to(tmp_path / "Ssz/Proofs", target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"directory symlinks unavailable: {error}")
+    result = check(tmp_path)
+    assert result.returncode != 0
+    assert "source-directory symlinks are unsupported" in result.stderr
+    assert str(alias) in result.stderr
+
+
 @pytest.mark.parametrize("excluded", [".lake", ".git", ".venv"])
 def test_dependency_and_build_directories_are_not_parsed(tmp_path: Path, excluded: str) -> None:
     tree(tmp_path, "import Ssz.Orphan\n")
@@ -103,6 +122,29 @@ def test_dependency_and_build_directories_are_not_parsed(tmp_path: Path, exclude
     (ignored / "Ignored.lean").write_text("/- unterminated")
     result = check(tmp_path)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("name", [".lake", ".git", ".venv"])
+def test_nested_names_remain_owned_source(tmp_path: Path, name: str) -> None:
+    tree(tmp_path, "import Ssz.Orphan\n")
+    nested = tmp_path / "Ssz" / name
+    nested.mkdir()
+    (nested / "Hidden.lean").write_text("def hidden := 1\n")
+    result = check(tmp_path)
+    assert result.returncode != 0
+    assert "missing from the audited import closure" in result.stderr
+    assert "Hidden" in result.stderr
+
+
+@pytest.mark.parametrize("name", [".lake", ".git", ".venv"])
+def test_import_from_excluded_root_directory_is_rejected(tmp_path: Path, name: str) -> None:
+    tree(tmp_path, f"import «{name}».Helper\nimport Ssz.Orphan\n")
+    excluded = tmp_path / name
+    excluded.mkdir()
+    (excluded / "Helper.lean").write_text("def helper := 1\n")
+    result = check(tmp_path)
+    assert result.returncode != 0
+    assert "import from excluded root directory" in result.stderr
 
 
 @pytest.mark.parametrize("header", ["import\n", "/- unterminated", "public import Ssz.Orphan\n"])

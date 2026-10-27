@@ -51,13 +51,25 @@ def check(root: Path) -> list[str]:
     # owned coverage obligations. Prune dependency/build environments before walking.
     modules = {}
     for directory, subdirs, files in root.walk():
-        subdirs[:] = [name for name in subdirs if name not in EXCLUDED_DIRS]
+        if directory == root:
+            subdirs[:] = [name for name in subdirs if name not in EXCLUDED_DIRS]
+            files = [name for name in files if name not in EXCLUDED_DIRS]
+        # Path.walk lists directory symlinks among files when follow_symlinks is false.
+        # Reject aliases rather than silently omitting a namespace from the graph.
+        for name in [*subdirs, *files]:
+            path = directory / name
+            if path.is_symlink() and path.is_dir():
+                raise ValueError(f"source-directory symlinks are unsupported: {path}")
         for filename in files:
             path = directory / filename
             if path.suffix == ".lean":
                 modules[path.relative_to(root).with_suffix("").parts] = path
     modules[("Ssz",)] = root / "Ssz.lean"
     parsed = imports(sorted(modules.values()))
+    for path, names in parsed.items():
+        for name in names:
+            if name and name[0] in EXCLUDED_DIRS:
+                raise ValueError(f"{path}: import from excluded root directory: {'.'.join(name)}")
     graph = {name: parsed[path] for name, path in modules.items()}
     failures = []
     owned = {name for name in modules if name[:1] == ("Ssz",)}
