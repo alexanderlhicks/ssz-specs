@@ -129,6 +129,9 @@ def main : IO Unit := do
   let headerType := Desc.container ["slot", "proposer_index", "parent_root", "state_root", "body_root"]
     [.uint 8, .uint 8, .byteVector 32, .byteVector 32, .byteVector 32]
   let headerRoot ← checkedRoot "header root" (rooted headerType header)
+  -- Independently folded with SHA-256 from the five fields, padded to eight leaves.
+  let expectedHeader := "9285aa0f00f5919d15643e51f89334b00ebc2ffd826a9cf9a64e763517627778"
+  unless hex headerRoot == expectedHeader do throw (IO.userError "header root differs from known answer")
   IO.println s!"header root {hex headerRoot}"
   time "BeaconBlockHeader root" (← IO.mkRef header) (rooted headerType)
   -- The same header against its declaration compiled once.
