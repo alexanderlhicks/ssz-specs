@@ -82,7 +82,8 @@ def diffCompatible (entry : Json) : Except String Unit := do
 
 /-- Run a generated corpus. -/
 def runDiff (file : System.FilePath) : IO (Nat × Array String) := do
-  let json ← IO.ofExcept (Json.parse (← IO.FS.readFile file))
+  let json ← IO.ofExcept ((Json.parse (← IO.FS.readFile file)).mapError fun error =>
+    s!"{file}: {error}")
   -- Missing sections are allowed, but malformed sections and empty batches are not evidence.
   let sections : Except String (Array Json × Array Json) := do
     let .obj object := json | throw "expected a differential corpus object"
