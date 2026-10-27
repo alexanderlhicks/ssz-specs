@@ -195,17 +195,29 @@ termination_by (budget, 2)
 
 end
 
-/-- The root of the node at a generalized index of the value an encoding holds. -/
+/-- The root of the node at a generalized index of the value an encoding holds.
+
+Requires a well-formed descriptor. Reference equivalence additionally assumes
+`64 * b.size + 128 < USize.size`; encoding validation does not check these premises.
+-/
 def nodeRoot (d : Desc) (b : ByteArray) (index : Nat) : Except Err ByteArray := do
   validate d b
   nodeRootAt (d.nesting + index) d b 0 b.size index
 
-/-- The branch that authenticates one generalized index of the value an encoding holds. -/
+/-- The branch that authenticates one generalized index of the value an encoding holds.
+
+Requires a well-formed descriptor. Reference equivalence additionally assumes
+`64 * b.size + 128 < USize.size`; encoding validation does not check these premises.
+-/
 def buildProof (d : Desc) (b : ByteArray) (index : Nat) : Except Err (List ByteArray) := do
   validate d b
   (← getBranchIndices index).mapM fun node => nodeRootAt (d.nesting + node) d b 0 b.size node
 
-/-- The nodes that authenticate several generalized indices of the value an encoding holds. -/
+/-- The nodes that authenticate several generalized indices of the value an encoding holds.
+
+Requires a well-formed descriptor. Reference equivalence additionally assumes
+`64 * b.size + 128 < USize.size`; encoding validation does not check these premises.
+-/
 def buildMultiproof (d : Desc) (b : ByteArray) (indices : List Nat) : Except Err (List ByteArray) := do
   validate d b
   (← getHelperIndices indices).mapM fun node => nodeRootAt (d.nesting + node) d b 0 b.size node

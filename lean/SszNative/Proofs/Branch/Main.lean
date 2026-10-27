@@ -69,7 +69,7 @@ open Ssz
 The node at a generalized index read from an encoding is the node of the value it decodes to, or the same refusal.
 
 The type is well formed, and the encoding small enough that every buffer the walk builds has machine-sized offsets.
-Every array a 64-bit machine holds is that small.
+The caller supplies the exact bound below; the theorem does not prove allocation success.
 -/
 theorem nodeRoot_eq (d : Desc) (sound : d.wellFormed = .ok ()) (b : ByteArray)
     (small : 64 * b.size + 128 < USize.size) (index : Nat) :

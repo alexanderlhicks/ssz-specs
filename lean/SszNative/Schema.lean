@@ -19,7 +19,12 @@ inductive Leaf where
   /-- A field with a tree of its own, rooted from its bytes. -/
   | nested (d : Desc) (offset width : Nat)
 
-/-- What a struct of fixed-size fields compiles to. -/
+/--
+The internal cache produced by `Schema.compile` for a fixed-size struct.
+
+Its public fields do not establish that they describe any particular declaration.
+Use the compiler-produced cache for the schema equivalence guarantees.
+-/
 structure FixedStruct where
   /-- The encoding's width in bytes. -/
   width : Nat
@@ -32,7 +37,13 @@ structure FixedStruct where
   /-- The height of the tree over the leaves. -/
   depth : Nat
 
-/-- A declaration, with what reading values against it needs worked out in advance. -/
+/--
+A declaration with a cached plan for reading its encodings.
+
+The equivalence theorems concern `Schema.compile d`, not arbitrary public record values.
+Construct with `Schema.compile` rather than supplying cache fields independently.
+Root operations additionally require a well-formed declaration and the documented size bound.
+-/
 structure Schema where
   /-- The declaration. -/
   desc : Desc
@@ -47,7 +58,12 @@ def leavesOf : List Desc → Nat → List Leaf
       else Leaf.nested field offset (fixedWidth field)
     leaf :: leavesOf rest (offset + fixedWidth field)
 
-/-- Compiles a declaration. -/
+/--
+Builds a cache consistent with a declaration, without checking declaration legality.
+
+Check `d.wellFormed` once before using an externally supplied descriptor for roots or proofs.
+Encoding validation still agrees with deserialization for every descriptor.
+-/
 def Schema.compile (d : Desc) : Schema :=
   match d with
   | .container _ fields =>
@@ -89,7 +105,11 @@ def foldShort (level : ByteArray) (width height : Nat) : (remaining : Nat) → B
       let padded := if width % 2 == 1 then (zeroRoot height).copySlice 0 level (32 * width) 32 else level
       foldShort (hashPairs padded 0 ((width + 1) / 2).toUSize) ((width + 1) / 2) (height + 1) remaining
 
-/-- Refuses an encoding exactly as deserializing it against the declaration would. -/
+/--
+For `s = Schema.compile d`, refuses exactly the encodings deserialization refuses.
+
+This checks encoding bytes; it does not establish declaration legality or validate forged caches.
+-/
 def Schema.validate (s : Schema) (b : ByteArray) : Except Err Unit :=
   match s.fixed with
   | some f =>
@@ -101,13 +121,23 @@ def Schema.validate (s : Schema) (b : ByteArray) : Except Err Unit :=
     else checkProbes b 0 f.probes
   | none => Native.validate s.desc b
 
-/-- The root of a valid encoding. -/
+/--
+Unchecked rooting of an already accepted encoding with a compiler-produced schema.
+
+Requires a well-formed declaration, successful encoding validation and
+`64 * b.size + 128 < USize.size` for reference equivalence.
+-/
 def Schema.rootOf (s : Schema) (b : ByteArray) : ByteArray :=
   match s.fixed with
   | some f => foldShort (fillLeaves b f.leaves) f.leaves.size 0 f.depth
   | none => Native.rootOf s.desc b 0 b.size
 
-/-- The SSZ root of the value an encoding holds, or the reason deserialization refuses the encoding. -/
+/--
+Roots an encoding with a compiler-produced schema, or reports its encoding refusal.
+
+For reference equivalence, the declaration must be well formed and
+`64 * b.size + 128 < USize.size`. Encoding validation does not check these premises.
+-/
 def Schema.hashTreeRoot (s : Schema) (b : ByteArray) : Except Err ByteArray := do
   s.validate b
   return s.rootOf b

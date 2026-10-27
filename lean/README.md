@@ -78,6 +78,16 @@ The current upstream implementation lives in [ethereum/ssz-specs](https://github
 Declarations and values are separate data.
 Call `Desc.wellFormed` before using an externally supplied declaration.
 The low-level operations do not repeat declaration validation at every recursive step.
+`Native.validate` checks encoding bytes exactly as deserialization does; it does not check
+that the descriptor itself is a legal SSZ declaration. Native roots, nodes and proof
+construction assume a successful `Desc.wellFormed` check. The native root/proof
+reference-equivalence theorems also require `64 * bytes.size + 128 < USize.size`.
+These premises are not memory-allocation or runtime bounds.
+
+Create schemas with `Schema.compile` and preserve their caches. Compilation does not
+validate descriptor legality, and manually supplying `Schema` or `FixedStruct` fields
+is outside the compiler-image equivalence theorems. An external descriptor should be
+checked once before compilation or use, rather than at every recursive step.
 A successful encoding establishes that its value fits a well-formed declaration.
 Proof requests deliberately reject the root itself, empty requests, duplicate indices,
 and ancestor/descendant pairs.
@@ -204,9 +214,9 @@ and exhaustive canonical re-encoding checks for one- and two-byte inputs across 
 - [References](SszNative/Proofs/Reference.lean): what each kernel writes is what the Lean body it stands in for computes, byte by byte.
 - [Decoding checks](SszNative/Proofs/Validate/Main.lean): the check refuses exactly what deserialization refuses, with the same error, for every declaration.
 - [Roots](SszNative/Proofs/Root/Main.lean): the root read from an encoding is the root of the value it decodes to, for every well-formed declaration.
-  The buffer must be addressable: 64 times its size fits a machine word, which every array on a 64-bit machine satisfies.
-- [Branches](SszNative/Proofs/Branch/Main.lean): nodes, branches, and multiproofs read from an encoding are the specification's, refusals included.
-- [Compiled declarations](SszNative/Proofs/Schema/Main.lean): a declaration compiled once checks and roots values exactly as the declaration itself does.
+  The exact buffer premise is `64 * bytes.size + 128 < USize.size`; it is supplied by the caller.
+- [Branches](SszNative/Proofs/Branch/Main.lean): nodes, branches, and multiproofs read from an encoding are the specification's, refusals included, for a well-formed descriptor and the same buffer premise as roots.
+- [Compiled declarations](SszNative/Proofs/Schema/Main.lean): a compiler-produced schema checks encodings exactly as the declaration does; root equality additionally requires its declaration to be well formed and the same buffer premise. Arbitrarily supplied cache fields are outside that guarantee.
 - [Verification](SszNative/Proofs/Verify.lean): the native verifiers answer exactly what the specification's verifiers answer.
 
 ### Domains and limits
@@ -231,11 +241,15 @@ No theorem assumes SHA-256 is injective or collision-free.
 
 The native implementation adds four trusted pieces.
 The machine model in `SszNative/Asm/Semantics.lean` must describe what the processor does.
-The regressions run every kernel, in every layout, on both the model and the processor, and compare.
-The model leaves out faults and the direction flag, which the callers rule out, as its header says.
-The printer and the assembler must turn each instruction list into the machine code the model reads.
-The C bindings in `native/` must pick a kernel, split a count between the two hashing kernels, and check bounds, as their comments say.
-The Lean compiler must run the tasks a wide tree is split into.
+The regressions execute every kernel on the model and compare native results with their references. Hardware execution depends on the CPU/OS capabilities; unavailable AVX-512 is not hardware evidence.
+The model leaves out faults and the direction flag. Its total byte-memory function does not establish legal processor reads or mapped pages. Callers and the platform must establish the excluded conditions; a final write frame alone is not a read-footprint proof.
+The printer, assembler and linker must preserve the meaning of the modeled instruction values in the loaded code. There is no checked binary-decoder or model-to-hardware relation here; assembly freshness checks source identity, not instruction encoding semantics. Operand validity must also be established for emitted instances.
+The C bindings in `native/` must preserve ownership and ABI contracts, allocate valid separate outputs, select supported kernels, split counts and check every required range. Logical `@[extern]` reference bodies and axiom audits do not verify these C behaviors.
+The Lean compiler and runtime must implement the logical byte operations and tasks a wide tree is split into. Functional equality does not establish successful allocation, peak auxiliary space, cycle counts, constant-time behavior or supported-platform coverage.
+
+The reference collision-witness theorems are structural implications. They are not a formal
+probabilistic computational-security game or a verified efficient reduction. Production
+client and fork-specific schema integration also require separate validation.
 
 Kernel checking trusts Lean's kernel and standard logical foundations.
 The axiom audit runs after the complete specification has been imported, so newly imported proof modules are included automatically.

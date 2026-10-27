@@ -30,7 +30,7 @@ theorem hashTreeRoot_eq_of (facts : RootProof.Facts) (d : Desc) (sound : d.wellF
 The native root of an encoding is the specification's root of the value it decodes to, or the same refusal.
 
 The type is well formed, and the encoding small enough that every buffer the root builds has machine-sized offsets.
-Every array a 64-bit machine holds is that small.
+The caller supplies the exact bound below; the theorem does not prove allocation success.
 -/
 theorem hashTreeRoot_eq (d : Desc) (sound : d.wellFormed = .ok ()) (b : ByteArray)
     (small : 64 * b.size + 128 < USize.size) :
