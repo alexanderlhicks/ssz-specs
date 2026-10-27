@@ -9,6 +9,7 @@ from pathlib import Path
 type Module = tuple[str, ...]
 
 PROJECT = Path(__file__).resolve().parents[1]
+EXCLUDED_DIRS = {".lake", ".git", ".venv"}
 
 
 def imports(paths: list[Path]) -> dict[Path, set[Module]]:
@@ -49,14 +50,16 @@ def check(root: Path) -> list[str]:
     prefixes = ["Ssz"]
     if (root / "SszNative").exists() or (root / "SszNative.lean").exists():
         prefixes.append("SszNative")
+    # Shared local modules are bridge nodes, even outside either audited tree.
+    # Prune build/dependency environments before walking rather than parsing caches.
     modules = {}
+    for directory, subdirs, files in root.walk():
+        subdirs[:] = [name for name in subdirs if name not in EXCLUDED_DIRS]
+        for filename in files:
+            path = directory / filename
+            if path.suffix == ".lean":
+                modules[path.relative_to(root).with_suffix("").parts] = path
     for prefix in prefixes:
-        modules.update(
-            {
-                path.relative_to(root).with_suffix("").parts: path
-                for path in (root / prefix).rglob("*.lean")
-            }
-        )
         modules[(prefix,)] = root / f"{prefix}.lean"
     parsed = imports(sorted(modules.values()))
     # Traverse one combined graph: native implementations may import reference
@@ -73,9 +76,9 @@ def check(root: Path) -> list[str]:
             )
     implementation = set().union(*(closure((prefix,), graph) for prefix in prefixes))
     leaked = sorted(
-        name for name in implementation if len(name) >= 2 and name[:2] in {
-            (prefix, "Proofs") for prefix in prefixes
-        }
+        name
+        for name in implementation
+        if len(name) >= 2 and name[:2] in {(prefix, "Proofs") for prefix in prefixes}
     )
     if leaked:
         failures.append(
