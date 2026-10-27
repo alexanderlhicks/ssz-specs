@@ -72,20 +72,33 @@ def stateBytes (count : Nat) : ByteArray :=
   let b := pushWord (pushWord (pushWord b (at_ 2) 4) (at_ 3) 4) offsets.2 4
   b ++ validators ++ balances ++ previous ++ current ++ scores
 
-/-- The median and the spread of a run of timings, after a warm-up. -/
-def time (label : String) (input : IO.Ref ByteArray) (work : ByteArray → ByteArray) : IO Unit := do
+/-- Refusals stop the benchmark with the workload and original refusal reason. -/
+def checked {α : Type} (label : String) (result : Except String α) : IO α :=
+  match result with
+  | .ok value => pure value
+  | .error reason => throw (IO.userError s!"{label}: {reason}")
+
+/-- Every timed workload returns a full root, or a full node marking a successful check. -/
+def checkedRoot (label : String) (result : Except String ByteArray) : IO ByteArray := do
+  let root ← checked label result
+  unless root.size == 32 do
+    throw (IO.userError s!"{label}: expected a 32-byte result, got {root.size}")
+  return root
+
+/-- The median and spread after successful preflight and warm-up; any failure aborts. -/
+def time (label : String) (input : IO.Ref ByteArray)
+    (work : ByteArray → Except String ByteArray) : IO Unit := do
+  let _ ← checkedRoot label (work (← input.get))
   -- Warm the caches, the allocator, and the clock for a third of a second.
   let warm ← IO.monoNanosNow
   while (← IO.monoNanosNow) - warm < 300000000 do
-    let r := work (← input.get)
-    if r.size == 1 then IO.println "?"
+    let _ ← checkedRoot label (work (← input.get))
   let mut samples : Array Nat := #[]
   for _ in [0:31] do
     let b ← input.get
     let t0 ← IO.monoNanosNow
-    let r := work b
-    -- Reading the result keeps the work from being skipped.
-    if r.size == 1 then IO.println "?"
+    -- Checking the result forces the work and prevents timing a refusal as success.
+    let _ ← checkedRoot label (work b)
     let t1 ← IO.monoNanosNow
     samples := samples.push (t1 - t0)
   let s := samples.qsort (· < ·)
@@ -100,49 +113,55 @@ def hex (b : ByteArray) : String :=
     let d := Nat.toDigits 16 x.toNat
     String.ofList (if d.length < 2 then '0' :: d else d))
 
-/-- The root, or the empty buffer for a refused encoding. -/
-def rooted (d : Desc) (b : ByteArray) : ByteArray :=
-  (hashTreeRoot d b).toOption.getD ByteArray.empty
+/-- Preserve refusals for benchmark preflight and sample checks. -/
+def rooted (d : Desc) (b : ByteArray) : Except String ByteArray :=
+  (hashTreeRoot d b).mapError reprStr
 
 def main : IO Unit := do
   let limit := 2 ^ 40
   -- A list of a hundred thousand integers.
   let ints := List.range 100000 |>.foldl (fun b i => pushWord b i 8) (ByteArray.emptyWithCapacity 800000)
   let intList := Desc.list (.uint 8) limit
-  IO.println s!"ints root {hex (rooted intList ints)}"
+  IO.println s!"ints root {hex (← checkedRoot "ints root" (rooted intList ints))}"
   time "List[uint64] 100k root" (← IO.mkRef ints) (rooted intList)
   -- One block header.
   let header := pushRun (pushRun (pushRun (pushWord (pushWord ByteArray.empty 7 8) 9 8) 5 32) 10 32) 15 32
   let headerType := Desc.container ["slot", "proposer_index", "parent_root", "state_root", "body_root"]
     [.uint 8, .uint 8, .byteVector 32, .byteVector 32, .byteVector 32]
-  IO.println s!"header root {hex (rooted headerType header)}"
+  let headerRoot ← checkedRoot "header root" (rooted headerType header)
+  IO.println s!"header root {hex headerRoot}"
   time "BeaconBlockHeader root" (← IO.mkRef header) (rooted headerType)
   -- The same header against its declaration compiled once.
   let headerSchema := Schema.compile headerType
+  let compiledRoot ← checkedRoot "compiled header root" ((headerSchema.hashTreeRoot header).mapError reprStr)
+  unless compiledRoot == headerRoot do throw (IO.userError "compiled header root differs")
   time "BeaconBlockHeader root, compiled" (← IO.mkRef header) fun b =>
-    (headerSchema.hashTreeRoot b).toOption.getD ByteArray.empty
+    (headerSchema.hashTreeRoot b).mapError reprStr
   -- A million validators, as in a beacon state.
   let count := 1000000
   let validators := (List.range count).foldl pushValidator (ByteArray.emptyWithCapacity (121 * count))
   let validatorList := Desc.list validator limit
-  IO.println s!"validators root {hex (rooted validatorList validators)}"
+  IO.println s!"validators root {hex (← checkedRoot "validators root" (rooted validatorList validators))}"
   let input ← IO.mkRef validators
   time "List[Validator] 1M root" input (rooted validatorList)
-  time "List[Validator] 1M decoding check" input fun b =>
-    if (validate validatorList b).isOk then zeroNode else ByteArray.empty
+  time "List[Validator] 1M decoding check" input fun b => do
+    let _ ← (validate validatorList b).mapError reprStr
+    return zeroNode
   -- A beacon state with the same million validators.
   let stateEncoding := stateBytes count
-  IO.println s!"state root {hex (rooted state stateEncoding)}"
+  IO.println s!"state root {hex (← checkedRoot "state root" (rooted state stateEncoding))}"
   time "BeaconState-like 1M root" (← IO.mkRef stateEncoding) (rooted state)
   -- The branch for one validator's public key: element 123456 of the list's contents, then field 0.
   let index := (2 ^ 41 + 123456) * 8
-  let branch := (buildProof validatorList validators index).toOption.getD []
-  let leaf := (nodeRoot validatorList validators index).toOption.getD ByteArray.empty
-  let root := rooted validatorList validators
-  let verified := (verifyMerkleProof leaf branch index root).toOption == some true
+  let branch ← checked "validator branch" ((buildProof validatorList validators index).mapError reprStr)
+  let leaf ← checkedRoot "validator leaf" ((nodeRoot validatorList validators index).mapError reprStr)
+  let root ← checkedRoot "validator root" (rooted validatorList validators)
+  let verified ← checked "branch verification" ((verifyMerkleProof leaf branch index root).mapError reprStr)
+  unless verified do throw (IO.userError "branch verification returned false")
   IO.println s!"branch of {branch.length} nodes, verified {verified}"
-  time "List[Validator] 1M branch" input fun b =>
-    if (buildProof validatorList b index).isOk then zeroNode else ByteArray.empty
-  time "List[Validator] 1M branch verification" (← IO.mkRef leaf) fun leaf =>
-    if (verifyMerkleProof leaf branch index root).toOption == some true then zeroNode
-    else ByteArray.empty
+  time "List[Validator] 1M branch" input fun b => do
+    let _ ← (buildProof validatorList b index).mapError reprStr
+    return zeroNode
+  time "List[Validator] 1M branch verification" (← IO.mkRef leaf) fun leaf => do
+    let verified ← (verifyMerkleProof leaf branch index root).mapError reprStr
+    if verified then return zeroNode else throw "branch verification returned false"
