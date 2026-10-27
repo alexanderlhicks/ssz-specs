@@ -32,7 +32,7 @@ lean_lib Sha256Tests where
   roots := #[`Tests.Hash.Sha256]
 
 lean_lib NativeTests where
-  roots := #[`Tests.Native]
+  roots := #[`Tests.Native, `Tests.NativeColumns]
 
 @[default_target]
 lean_exe conformance where

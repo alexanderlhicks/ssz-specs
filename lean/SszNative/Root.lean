@@ -143,13 +143,10 @@ def chunkedRoots (d : Desc) (b : ByteArray) (start stride count : Nat) : ByteArr
 termination_by (sizeOf d, 1, 0)
 
 /-- The column of each of a sequence's elements, across a count of records. -/
-def elementColumns (element : Desc) (b : ByteArray) (start stride count width : Nat) :
-    (length : Nat) → List ByteArray
-  | 0 => []
-  | length + 1 =>
-    elementColumns element b start stride count width length ++
-      [rootsOf element b (start + width * length) stride count]
-termination_by length => (sizeOf element, 0, length + 1)
+def elementColumns (element : Desc) (b : ByteArray) (start stride count width length : Nat) : List ByteArray :=
+  -- Build in element order without repeatedly traversing an already-built column list.
+  (List.range length).map fun i => rootsOf element b (start + width * i) stride count
+termination_by (sizeOf element, 0, length + 1)
 
 /-- The column of each field, across a count of records. -/
 def fieldColumns : List Desc → ByteArray → Nat → Nat → Nat → Nat → List ByteArray
