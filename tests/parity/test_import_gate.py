@@ -72,6 +72,39 @@ def test_indirect_proof_import_is_rejected(tmp_path: Path) -> None:
     assert "proof modules imported by the implementation:\nSsz.Proofs" in result.stderr
 
 
+def test_shared_module_cannot_hide_acyclic_proof_dependency(tmp_path: Path) -> None:
+    tree(
+        tmp_path,
+        "import Shared\n",
+        "import Ssz\nimport Ssz.Orphan\nimport Ssz.Proofs.Helper\n",
+    )
+    (tmp_path / "Ssz/Proofs").mkdir()
+    (tmp_path / "Ssz/Proofs/Helper.lean").write_text("def helper := 1\n")
+    (tmp_path / "Shared.lean").write_text("import Ssz.Proofs.Helper\n")
+    result = check(tmp_path)
+    assert result.returncode != 0
+    assert "proof modules imported by the implementation:\nSsz.Proofs.Helper" in result.stderr
+    assert "missing from the audited import closure" not in result.stderr
+
+
+def test_shared_module_can_cover_owned_implementation(tmp_path: Path) -> None:
+    tree(tmp_path, "import Shared\n")
+    (tmp_path / "Shared.lean").write_text("import Ssz.Orphan\n")
+    (tmp_path / "Unused.lean").write_text("def unused := 1\n")
+    result = check(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("excluded", [".lake", ".git", ".venv"])
+def test_dependency_and_build_directories_are_not_parsed(tmp_path: Path, excluded: str) -> None:
+    tree(tmp_path, "import Ssz.Orphan\n")
+    ignored = tmp_path / excluded / "nested"
+    ignored.mkdir(parents=True)
+    (ignored / "Ignored.lean").write_text("/- unterminated")
+    result = check(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("header", ["import\n", "/- unterminated", "public import Ssz.Orphan\n"])
 def test_invalid_header_is_not_treated_as_complete(tmp_path: Path, header: str) -> None:
     tree(tmp_path, header)

@@ -92,6 +92,9 @@ The build recipe also rejects specification files omitted from the audited impor
 and rejects a proof module reached from the implementation tree.
 The import gate builds a small `importHeaders` executable that uses Lean's own header parser;
 comments, escaped module names and import modifiers therefore follow the pinned Lean grammar.
+Its graph follows all project-local Lean modules, including bridges outside `Ssz`, while
+only `Ssz` modules must belong to the audited closure. Dependency and environment directories
+named `.lake`, `.git` or `.venv` are excluded.
 CI rebuilds the specification from source and runs the vector, regression, and differential checks.
 Only Lean's standard logical axioms are allowed: propositional extensionality,
 classical choice, and quotient soundness.

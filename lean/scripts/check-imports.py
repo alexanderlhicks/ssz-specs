@@ -9,6 +9,7 @@ from pathlib import Path
 type Module = tuple[str, ...]
 
 PROJECT = Path(__file__).resolve().parents[1]
+EXCLUDED_DIRS = {".lake", ".git", ".venv"}
 
 
 def imports(paths: list[Path]) -> dict[Path, set[Module]]:
@@ -46,15 +47,21 @@ def closure(start: Module, graph: dict[Module, set[Module]]) -> set[Module]:
 
 def check(root: Path) -> list[str]:
     """Report source modules omitted from the proof root or proof imports in implementation."""
-    modules = {
-        path.relative_to(root).with_suffix("").parts: path
-        for path in (root / "Ssz").rglob("*.lean")
-    }
+    # Follow project-local bridges outside Ssz without treating those modules as
+    # owned coverage obligations. Prune dependency/build environments before walking.
+    modules = {}
+    for directory, subdirs, files in root.walk():
+        subdirs[:] = [name for name in subdirs if name not in EXCLUDED_DIRS]
+        for filename in files:
+            path = directory / filename
+            if path.suffix == ".lean":
+                modules[path.relative_to(root).with_suffix("").parts] = path
     modules[("Ssz",)] = root / "Ssz.lean"
     parsed = imports(sorted(modules.values()))
     graph = {name: parsed[path] for name, path in modules.items()}
     failures = []
-    missing = sorted(modules.keys() - closure(("Ssz", "Proofs"), graph))
+    owned = {name for name in modules if name[:1] == ("Ssz",)}
+    missing = sorted(owned - closure(("Ssz", "Proofs"), graph))
     if missing:
         failures.append(
             "SSZ modules missing from the audited import closure:\n"
