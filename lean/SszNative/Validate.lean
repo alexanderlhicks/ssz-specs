@@ -386,7 +386,12 @@ termination_by _ options => (sizeOf options, 2, 0)
 
 end
 
-/-- Refuses an encoding exactly as deserializing it against the type would. -/
+/--
+Refuses an encoding exactly as deserializing it against the type would, for every descriptor.
+
+This validates bytes, not declaration legality. Check `d.wellFormed` at the boundary
+where an external descriptor is accepted before using it for roots or proofs.
+-/
 def validate (d : Desc) (b : ByteArray) : Except Err Unit :=
   validateRange d b 0 b.size
 

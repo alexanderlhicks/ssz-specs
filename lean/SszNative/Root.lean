@@ -288,7 +288,8 @@ end
 /--
 The SSZ root of the value an encoding holds, or the reason deserialization refuses the encoding.
 
-The type must be well formed.
+The type must be well formed; encoding validation does not check declaration legality.
+Reference equivalence additionally requires `64 * b.size + 128 < USize.size`.
 -/
 def hashTreeRoot (d : Desc) (b : ByteArray) : Except Err ByteArray := do
   validate d b
